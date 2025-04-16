@@ -113,40 +113,42 @@ async function generateQuerySummary(generativeModel, query, description, nextSte
     Query Details:  "Query Title: ${query.title} \n ${query.note_text !== '' || query.note_text !== null ? "Query Note: " + query.note_text : ''} \n Query Fields: ${query.queryBody.fields} \n Query Data: ${JSON.stringify(query.queryData)} \n"
     `;
     const queryPrompt = `
-    You are a specialized answering assistant that can summarize a Looker dashboard and the underlying data and propose operational next steps drawing conclusions from the Query Details listed above.
-    
-    You always answer with markdown formatting. You will be penalized if you do not answer with markdown when it would be possible.
-    The markdown formatting you support: headings, bold, italic, links, tables, lists, code blocks, and blockquotes.
-    You do not support images and never include images. You will be penalized if you render images. You will always format numerical values as either percentages or in dollar amounts rounded to the nearest cent. You should not indent any response.
-    
-    Your response for each dashboard query should always start on a new line in markdown, should not be indented and should include the following attributes starting with: 
-    - \"Query Name\": is a markdown heading and should use the Query Title data from the "context." The query name itself should be on a newline and should not be indented.
-    - \"Description\": should start on a newline, should not be indented and the generated description should be a paragraph starting on a newline. It should be 2-4 sentences max describing the query itself and should be as descriptive as possible.
-    - \"Summary\": should be a blockquote, should not be indented and should be 3-5 sentences max summarizing the results of the query being as knowledgeable as possible with the goal to give the user as much information as needed so that they don't have to investigate the dashboard themselves. End with a newline,
-    - \"Next Steps\" section which should contain 2-3 bullet points, that are not indented, drawing conclusions from the data and recommending next steps that should be clearly actionable followed by a newline 
-    Each dashboard query summary should start on a newline, should not be indented, and should end with a divider. Below are details on the dashboard and queries. \n
+    You are an expert Looker dashboard analyst tasked with summarizing dashboard queries and providing actionable next steps in Markdown format.
+
+    **Strict Formatting and Content Requirements:**
+
+    * **Markdown Output:** All responses must be formatted using Markdown. Supported elements include headings, bold, italic, links, tables, lists, code blocks, and blockquotes.
+    * **No Images:** Do not include or attempt to render images.
+    * **Numerical Formatting:** Format numerical values as percentages or dollar amounts (rounded to the nearest cent).
+    * **No Indentation:** Do not indent any part of your response.
+    * **Query-Specific Sections:** Each dashboard query summary should adhere to the following structure, starting on a new line:
+        * `## Query Name`: Use the "Query Title" from the provided `context`.
+        * `Description`: A concise (2-4 sentences) paragraph describing the query.
+        * `> Summary`: A blockquote (3-5 sentences) summarizing the query results for user comprehension.
+        * `## Next Steps`: A bulleted list of 2-3 actionable next steps based on the query summary.
+    * **Newlines and Dividers:** Each query summary must start on a new line and end with a horizontal divider (`---`).
+
+    **Context:**
     
     '''
     Context: ${context}
     '''
 
-    Additionally here is an example of a formatted response in Markdown that you should follow, please use this as an example of how to structure your response and not verbatim copy the example text into your responses. \n
-    
-    ## Web Traffic Over Time \n
-    This query details the amount of web traffic received to the website over the past 6 months. It includes a web traffic source field of organic, search and display
-    as well as an amount field detailing the amount of people coming from those sources to the website. \n
-    
-    ## Summary \n
-    > It looks like search historically has been driving the most user traffic with 9875 users over the past month with peak traffic happening in december at 1000 unique users.
-    Organic comes in second and display a distant 3rd. It seems that display got off to a decent start in the year, but has decreased in volume consistently into the end of the year.
-    There appears to be a large spike in organic traffic during the month of March a 23% increase from the rest of the year.
-    \n
-    
+    **Example Output (Use as a Template, Not Verbatim):**
+
+    '''markdown
+    ## Web Traffic Over Time
+
+    This query details the amount of web traffic received to the website over the past 6 months. It includes a web traffic source field of organic, search, and display, as well as an amount field detailing the number of users from those sources.
+
+    > It appears that search has consistently driven the highest user traffic, with 9875 users in the past month and a peak in December at 1000 unique users. Organic traffic is the second highest, while display traffic is significantly lower. Display traffic started strong but declined steadily. There was a notable 23% spike in organic traffic in March.
+
     ## Next Steps
-    * Look into the data for the month of March to determine if there was an issue in reporting and/or what sort of local events could have caused the spike
-    * Continue investing into search advertisement with common digital marketing strategies. IT would also be good to identify/breakdown this number by campaign source and see what strategies have been working well for Search.
-    * Display seems to be dropping off and variable. Use only during select months and optimize for heavily trafficed areas with a good demographic for the site retention.\n
-    \n
+    * Investigate the 23% organic traffic spike in March to identify potential causes (e.g., marketing campaign, website error).
+    * Segment search traffic by campaign source to identify high-performing strategies.
+    * Analyze display traffic patterns to determine the factors contributing to its decline and explore optimization strategies.
+    ---
+    '''
     `;
     const prompt = {
         contents: [
@@ -217,31 +219,34 @@ async function generateSummary(generativeModel, rawQuerySummaries, nextStepsInst
 async function generateQuerySuggestions(generativeModel, queryResults, querySummaries, nextStepsInstructions) {
 
     const querySuggestionsPromptData = `
-    You are an analyst that will generate potential next-step investigation queries in json format.
-    Please provide suggestions of queries or data exploration that could be done to further investigate the data. \n
-    The output should be a JSON array of strings, each string representing a query or data exploration suggestion. \n
-    These should address the potential next steps in analysis, with this criteria: ${nextStepsInstructions} \n
-    They should be actionable and should be able to be executed in Looker. \n
-    Here is data related to what is currently known and shown. These kind of queries do not need to be repeated: \n                            
-                    
-    data: ${queryResults} \n
+    You are an expert Looker analyst tasked with generating actionable next-step investigation queries in JSON format.
 
-    Here are the previous analysis and next steps. Queries should be related to these next steps or issues:
-    ${querySummaries} \n
+    Your goal is to provide a JSON array of strings, where each string represents a potential Looker query or data exploration suggestion. These suggestions should directly address the "next steps" in analysis, guided by the following criteria:
 
-    Please include a date filter in EVERY query request, by adding the last 30 days if there is no other relevant date filter.
-    Here is the desired output format for the response, with exactly three querySuggestion elements: \n
-    ---------
+    * **Actionable and Looker-Executable:** Queries must be feasible within the Looker platform.
+    * **Targeted Investigation:** Queries should build upon the provided queryResults and querySummaries, avoiding repetition of existing analyses.
+    * **Alignment with Next Steps:** Queries must directly relate to the analytical "next steps" outlined in `${nextStepsInstructions}` and the context provided within `${querySummaries}`.
+    * **Date Filtering:** Include a date filter in every query. If a relevant date range isn't specified in the context, default to the "last 30 days."
+
+    Here's the data context:
+
+    * **Current Data:** `${queryResults}`
+    * **Previous Analysis and Next Steps:** `${querySummaries}`
+    * **Next Step Instructions:** `${nextStepsInstructions}`
+
+    Output Format:
+
+    Provide your response in the following JSON format, containing exactly three querySuggestion elements:
+
     '''json
     [
         {"querySuggestion": "Show me the top XXX entries for YYY on October 13th, 2024"},
         {"querySuggestion": "What are the lowest values for ZZZ, grouped by AAA, in the last 30 days?"},
-        {"querySuggestion": "What is the producitivity and standard deviation for the XXX facility for the past 3 months?"}
+        {"querySuggestion": "What is the productivity and standard deviation for the XXX facility for the past 3 months?"}
     ]
     '''
-    ----------
-    
     `;
+
 
     const querySuggestionsPrompt = {
         contents: [{ role: 'user', parts: [{ text: querySuggestionsPromptData }] }]
