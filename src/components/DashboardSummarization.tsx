@@ -68,6 +68,12 @@ const PRESET_PROMPTS: PresetPrompt[] = [
     title: 'Action-Oriented',
     description: 'Focus on next steps and recommendations',
     prompt: 'Analyze this dashboard with a focus on actionable insights. Prioritize specific recommendations, outline clear next steps, and identify immediate opportunities for optimization or improvement.'
+  },
+  {
+    id: 'prescriptive',
+    title: 'Prescriptive Analysis',
+    description: 'Gives the prescriptive analysis based on pre-trained BQML models',
+    prompt: 'Analyze this dashboard and based on the BQML model and this dashbaord.focus on actionable insights'
   }
 ];
 
