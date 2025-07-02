@@ -35,7 +35,31 @@ import { DashboardMetadata, Query, QuerySummary, SummaryDataContextType, Loading
 import { fetchQueryData } from '../utils/fetchQueryData'
 import { collateSummaries } from '../utils/collateSummaries'
 import { generateQuerySuggestions } from '../utils/generateQuerySuggestions'
+import { fetchPrescriptiveAnalysis } from '../utils/fetchPrescriptiveAnalysis'
 import styled, { keyframes } from 'styled-components';
+
+
+const PrescriptiveAnalysisPrompt = `User's question:
+'What will be the impact on medv if rm increases by 2 units?'
+Instructions:
+- Each key represents a feature (e.g., 'rm', 'lstat'), and its corresponding value is the model's learned coefficient (weight).
+- The model predicts medv (median house value). The prediction is a linear combination of features:
+medv = sum(weight_i * feature_i) + intercept
+- When a user asks: 'What happens if [feature] increases/decreases by [X]?', calculate the impact as:
+Impact = X * weight
+- If a user asks for feature importance or driver analysis:
+- Rank features by absolute value of their weights.
+- Explain how each feature influences medv (positive/negative).
+- If the user asks 'How can I increase medv by Y?', suggest feature changes based on inverse weight logic.
+- Include numbers in the answer, especially when simulating changes.
+- Respond in a strategic tone suitable for business decision-makers.
+- If the intercept is present (e.g., '_INTERCEPT_': 36.77), you may include it when explaining the full model.
+Example queries to handle:
+- 'How does a 1 unit increase in rm affect medv?'
+- 'What features are most important in predicting medv?'
+- 'What if lstat drops by 2 units?'
+- 'How can we increase medv by 5 points?'
+Always aim to give clear, actionable insights grounded in the model weights provided.`
 
 interface PresetPrompt {
   id: string;
@@ -73,7 +97,7 @@ const PRESET_PROMPTS: PresetPrompt[] = [
     id: 'prescriptive',
     title: 'Prescriptive Analysis',
     description: 'Gives the prescriptive analysis based on pre-trained BQML models',
-    prompt: 'Analyze this dashboard and based on the BQML model and this dashbaord.focus on actionable insights'
+    prompt: PrescriptiveAnalysisPrompt
   }
 ];
 
@@ -253,6 +277,7 @@ export const DashboardSummarization: React.FC = () => {
   const slackOauth = useSlackOauth()
   const restfulService = process.env.RESTFUL_WEBSERVICE || ''
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+  const [prescriptiveAnalysis, setPrescriptiveAnalysis] = useState('');
 
   const handlePresetSelect = (preset: PresetPrompt) => {
     setSelectedPreset(preset.id);
@@ -288,16 +313,16 @@ export const DashboardSummarization: React.FC = () => {
     fetchQueryResults();
   }, [dashboardMetadata.queries, core40SDK]);
 
-  const fetchQueryMetadata = useCallback( async () => {
+  const fetchQueryMetadata = useCallback(async () => {
     if (dashboardId && dashboardId !== 'undefined') {
-        setLoadingDashboardMetadata(true)
-        const { description, queries } = await fetchDashboardDetails(dashboardId, core40SDK, extensionSDK, dashboardFilters)
-        if (!loadingDashboardMetadata) {
-          await extensionSDK.localStorageSetItem(`${dashboardId}:${JSON.stringify(dashboardFilters)}`, JSON.stringify({ dashboardFilters, dashboardId, queries, description }))
-          setDashboardMetadata({ dashboardFilters, dashboardId, queries, description })
-        }
+      setLoadingDashboardMetadata(true)
+      const { description, queries } = await fetchDashboardDetails(dashboardId, core40SDK, extensionSDK, dashboardFilters)
+      if (!loadingDashboardMetadata) {
+        await extensionSDK.localStorageSetItem(`${dashboardId}:${JSON.stringify(dashboardFilters)}`, JSON.stringify({ dashboardFilters, dashboardId, queries, description }))
+        setDashboardMetadata({ dashboardFilters, dashboardId, queries, description })
       }
-    },[dashboardId,dashboardFilters])
+    }
+  }, [dashboardId, dashboardFilters])
 
   // Fetch dashboard metadata, including description and queries
   useEffect(() => {
@@ -331,6 +356,21 @@ export const DashboardSummarization: React.FC = () => {
     }
   };
 
+  const handlePresetAnalysis = async () => {
+    console.log("In handlePresetAnalysis")
+    const userAnswer = await fetchPrescriptiveAnalysis(
+      nextStepsInstructions,
+      restfulService,
+      extensionSDK
+    );
+
+    if (userAnswer) {
+      setPrescriptiveAnalysis(userAnswer)
+    } else {
+      setPrescriptiveAnalysis("Hello, API failed")
+    }
+  }
+
   const handleRegenerate = async () => {
     if (!nextStepsInstructions.trim()) return;
     setLoading(true);
@@ -358,8 +398,8 @@ export const DashboardSummarization: React.FC = () => {
       <LandingContainer>
         <LandingHeader>
           <h2>Dashboard Summarization</h2>
-          <div style={{display:'flex',justifyContent:'flex-start'}}>
-            <img 
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <img
               height="auto"
               width={20}
               src={'https://www.svgrepo.com/show/354012/looker-icon.svg'}
@@ -395,7 +435,13 @@ export const DashboardSummarization: React.FC = () => {
             rows={10}
           />
           <Button
-            onClick={handleInitialGenerate}
+            onClick={() => {
+              if (selectedPreset == "prescriptive") {
+                handlePresetAnalysis();
+              } else {
+                handleInitialGenerate();
+              }
+            }}
             $variant="primary"
             disabled={loading || !nextStepsInstructions.trim()}
           >
@@ -406,6 +452,10 @@ export const DashboardSummarization: React.FC = () => {
               alt="Generate"
             />
           </Button>
+          <div id="prescriptive_analysis"
+            style={{ margin: '20px 0', fontSize: '16px' }}>
+            {prescriptiveAnalysis}
+          </div>
         </div>
       </LandingContainer>
     );
@@ -417,17 +467,17 @@ export const DashboardSummarization: React.FC = () => {
         {querySummaries.length > 0 && (
           <div className="summary-scroll">
             {querySummaries.map((summary, index) => (
-              <SummarySection 
+              <SummarySection
                 key={index}
                 style={{
                   opacity: loadingStates[`query-${index}`] ? 0.7 : 1,
                   transition: 'opacity 0.3s ease-in-out'
                 }}
               >
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'space-between' 
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
                 }}>
                   {loadingStates[`query-${index}`] && (
                     <LoadingIndicator>Generating...</LoadingIndicator>
@@ -441,7 +491,7 @@ export const DashboardSummarization: React.FC = () => {
       </Content>
 
       <Overlay $isVisible={isExpanded} onClick={() => setIsExpanded(false)} />
-      
+
       <ActionsBarContainer $isExpanded={isExpanded}>
         {isExpanded ? (
           <>
