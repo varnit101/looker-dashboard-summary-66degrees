@@ -3,9 +3,6 @@ export const fetchPrescriptiveAnalysis = async (
   restfulService: string,
   extensionSDK: any,
 ): Promise<any> => {
-  console.log('fetchPrescriptiveAnalysis userQuestion', userQuestion);
-  console.log(restfulService)
-
   try {
     const response = await extensionSDK[restfulService === 'http://localhost:5000' ? 'fetchProxy' : 'serverProxy'](`${restfulService}/generatePerspectiveAnalytics`, {
       method: 'POST',
@@ -17,9 +14,9 @@ export const fetchPrescriptiveAnalysis = async (
         client_secret: restfulService === 'http://localhost:5000' ? process.env.GENAI_CLIENT_SECRET : extensionSDK.createSecretKeyTag("genai_client_secret")
       })
     });
-    console.log('fetchPrescriptiveAnalysis response', response);
+
     if (response.ok) {
-      const data = await response.body;
+      const data = await response.body.suggestions;
       return data;
     } else {
       console.error('Error generating prescriptive analysis:', response.statusText);

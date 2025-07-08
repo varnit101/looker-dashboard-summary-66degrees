@@ -33,11 +33,17 @@ import useSlackOauth from '../hooks/useSlackOauth'
 import { fetchDashboardDetails } from '../utils/fetchDashboardDetails'
 import { DashboardMetadata, Query, QuerySummary, SummaryDataContextType, LoadingStates } from '../types'
 import { fetchQueryData } from '../utils/fetchQueryData'
+import { fetchPrescriptiveAnalysis } from '../utils/fetchPrescriptiveAnalysis'
 import { collateSummaries } from '../utils/collateSummaries'
 import { generateQuerySuggestions } from '../utils/generateQuerySuggestions'
-import { fetchPrescriptiveAnalysis } from '../utils/fetchPrescriptiveAnalysis'
 import styled, { keyframes } from 'styled-components';
 
+interface PresetPrompt {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+}
 
 const PrescriptiveAnalysisPrompt = `User's question:
 'What will be the impact on medv if rm increases by 2 units?'
@@ -60,13 +66,6 @@ Example queries to handle:
 - 'What if lstat drops by 2 units?'
 - 'How can we increase medv by 5 points?'
 Always aim to give clear, actionable insights grounded in the model weights provided.`
-
-interface PresetPrompt {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-}
 
 const PRESET_PROMPTS: PresetPrompt[] = [
   {
@@ -357,7 +356,6 @@ export const DashboardSummarization: React.FC = () => {
   };
 
   const handlePresetAnalysis = async () => {
-    console.log("In handlePresetAnalysis")
     const userAnswer = await fetchPrescriptiveAnalysis(
       nextStepsInstructions,
       restfulService,
@@ -367,7 +365,7 @@ export const DashboardSummarization: React.FC = () => {
     if (userAnswer) {
       setPrescriptiveAnalysis(userAnswer)
     } else {
-      setPrescriptiveAnalysis("Hello, API failed")
+      setPrescriptiveAnalysis("Perspective Analytics API failed")
     }
   }
 
