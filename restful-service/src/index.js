@@ -1,61 +1,34 @@
-/*
-
-MIT License
-
-Copyright (c) 2023 Looker Data Sciences, Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-*/
-
 const express = require('express');
 const app = express();
-const cors = require('cors')
+const cors = require('cors');
 const http = require('http');
 const server = http.createServer(app);
-const { Server } = require('socket.io')
-const {VertexAI} = require('@google-cloud/vertexai');
+const fetch = require('node-fetch'); // Import node-fetch
 const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 dotenv.config();
 
-const storedClientSecret = process.env.GENAI_CLIENT_SECRET
+const storedClientSecret = process.env.GENAI_CLIENT_SECRET;
+const PROJECT_ID = process.env.PROJECT;
+const REGION = process.env.REGION || 'us-central1'; // Default region
+const MODEL_ID = process.env.MODEL_ID || 'gemini-2.0-flash'; // Default model, now from env
+const API_ENDPOINT = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/publishers/google/models/${MODEL_ID}:generateContent`;
 
-app.use(express.json()); // To parse JSON bodies
-app.use(cors())
+app.use(express.json());
+app.use(cors());
 
 const writeStructuredLog = (message) => {
-    // Complete a structured log entry.
-   return {
+    return {
         severity: 'INFO',
         message: message,
-        // Log viewer accesses 'component' as 'jsonPayload.component'.
         component: 'dashboard-summarization-logs',
-    }
-}
-
+    };
+};
 
 // Middleware to verify client secret
 const verifyClientSecret = (req, res, next) => {
     const clientSecret = req.body.client_secret;
-    console.log('checking client secret', clientSecret, storedClientSecret);
     if (clientSecret === storedClientSecret) {
         next();
     } else {
@@ -63,55 +36,93 @@ const verifyClientSecret = (req, res, next) => {
     }
 };
 
+// Helper function to get Google Cloud access token
+async function getAccessToken() {
+    try {
+        const { GoogleAuth } = require('google-auth-library');
+        const auth = new GoogleAuth({
+            scopes: 'https://www.googleapis.com/auth/cloud-platform',
+        });
+        const client = await auth.getClient();
+        const accessToken = await client.getAccessToken();
+        return accessToken.token;
+    } catch (error) {
+        console.error('Error getting access token:', error);
+        throw error; // Re-throw to be caught by caller
+    }
+}
 
-// Initialize Vertex with your Cloud project and location
-const vertexAI = new VertexAI({project: process.env.PROJECT, location: process.env.REGION});
-// Instantiate the model
-const generativeModel = vertexAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    generationConfig: {maxOutputTokens: 2500, temperature: 0.4, candidateCount: 1}
-});
+// --- API Endpoint Handlers (using REST API) ---
+
 app.post('/generateQuerySummary', verifyClientSecret, async (req, res) => {
-    const { query, description, nextStepsInstructions } = req.body; // Update to receive query and description
+    const { query, description, nextStepsInstructions } = req.body;
     try {
-        // Replace this with your Vertex AI summarization logic
-        const summary = await generateQuerySummary(generativeModel, query, description, nextStepsInstructions);
+        const summary = await generateQuerySummary(query, description, nextStepsInstructions);
         res.json({ summary });
     } catch (e) {
-        console.log('There was an error processing the individual query summary: ', e);
-        res.status(500).send('Internal Server Error');
-    }
-});
-app.post('/generateSummary', verifyClientSecret, async (req, res) => {
-    const { querySummaries, nextStepsInstructions } = req.body; // Update to receive rawQuerySummaries and nextStepsInstructions
-    try {
-        // Generate dashboard summary
-        const summary = await generateSummary(generativeModel, querySummaries, nextStepsInstructions);
-        res.json({ summary });
-    } catch (e) {
-        console.log('There was an error processing the dashboard summary: ', e);
-        res.status(500).send('Internal Server Error');
-    }
-});
-app.post('/generateQuerySuggestions', verifyClientSecret, async (req, res) => {
-    const { queryResults, querySummaries, nextStepsInstructions } = req.body; // Update to receive queryResults, querySummaries, and nextStepsInstructions
-    try {
-        // Generate query suggestions
-        const suggestions = await generateQuerySuggestions(generativeModel, queryResults, querySummaries, nextStepsInstructions);
-        res.json({ suggestions }); // Correct the response key to suggestions
-    } catch (e) {
-        console.log('There was an error processing the query suggestions: ', e);
+        console.error('Error in /generateQuerySummary:', e);
         res.status(500).send('Internal Server Error');
     }
 });
 
-// for the individual query summary:
-async function generateQuerySummary(generativeModel, query, description, nextStepsInstructions) {
-    const context = `
-    Summary style/specialized instructions: ${ nextStepsInstructions || ''}
-    Dashboard Detail: ${description || ''} \n
-    Query Details:  "Query Title: ${query.title} \n ${query.note_text !== '' || query.note_text !== null ? "Query Note: " + query.note_text : ''} \n Query Fields: ${query.queryBody.fields} \n Query Data: ${JSON.stringify(query.queryData)} \n"
-    `;
+app.post('/generateSummary', verifyClientSecret, async (req, res) => {
+    const { querySummaries, nextStepsInstructions } = req.body;
+    try {
+        const summary = await generateSummary(querySummaries, nextStepsInstructions);
+        res.json({ summary });
+    } catch (e) {
+        console.error('Error in /generateSummary:', e);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+app.post('/generateQuerySuggestions', verifyClientSecret, async (req, res) => {
+    const { queryResults, querySummaries, nextStepsInstructions } = req.body;
+    try {
+        const suggestions = await generateQuerySuggestions(queryResults, querySummaries, nextStepsInstructions);
+        res.json({ suggestions });
+    } catch (e) {
+        console.error('Error in /generateQuerySuggestions:', e);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// --- Helper Functions (using REST API) ---
+
+async function generateQuerySummary(query, description, nextStepsInstructions) {
+    const accessToken = await getAccessToken();
+    const prompt = {
+        contents: [{
+            role: 'user',
+            parts: [{
+                text: getQuerySummaryPrompt(query, description, nextStepsInstructions)
+            }]
+        }]
+    };
+
+    const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(prompt),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text(); // Get error message
+        throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+    }
+    const data = await response.json();
+
+    if (data.error) {
+        throw new Error(`Vertex AI API error: ${data.error.message}`);
+    }
+
+    return data.candidates[0]?.content?.parts[0]?.text || '';
+}
+
+function getQuerySummaryPrompt(query, description, nextStepsInstructions) {
     const queryPrompt = `
     You are an expert Looker dashboard analyst tasked with summarizing dashboard queries and providing actionable next steps in Markdown format.
 
@@ -122,21 +133,25 @@ async function generateQuerySummary(generativeModel, query, description, nextSte
     * **Numerical Formatting:** Format numerical values as percentages or dollar amounts (rounded to the nearest cent).
     * **No Indentation:** Do not indent any part of your response.
     * **Query-Specific Sections:** Each dashboard query summary should adhere to the following structure, starting on a new line:
-        * `## Query Name`: Use the "Query Title" from the provided `context`.
-        * `Description`: A concise (2-4 sentences) paragraph describing the query.
-        * `> Summary`: A blockquote (3-5 sentences) summarizing the query results for user comprehension.
-        * `## Next Steps`: A bulleted list of 2-3 actionable next steps based on the query summary.
-    * **Newlines and Dividers:** Each query summary must start on a new line and end with a horizontal divider (`---`).
+        * \`## Query Name\`: Use the "Query Title" from the provided context.
+        * \`Description\`: A concise (2-4 sentences) paragraph describing the query.
+        * \`> Summary\`: A blockquote (3-5 sentences) summarizing the query results for user comprehension.
+        * \`## Next Steps\`: A bulleted list of 2-3 actionable next steps based on the query summary.
+    * **Newlines and Dividers:** Each query summary must start on a new line and end with a horizontal divider (\`---\`).
 
     **Context:**
     
-    '''
-    Context: ${context}
-    '''
+    Summary style/specialized instructions: ${nextStepsInstructions || ''}
+    Dashboard Detail: ${description || ''} 
+
+    Query Details: "Query Title: ${query.title} 
+    ${query.note_text !== '' && query.note_text !== null ? "Query Note: " + query.note_text : ''} 
+    Query Fields: ${query.queryBody.fields} 
+    Query Data: ${JSON.stringify(query.queryData)}"
 
     **Example Output (Use as a Template, Not Verbatim):**
 
-    '''markdown
+    \`\`\`markdown
     ## Web Traffic Over Time
 
     This query details the amount of web traffic received to the website over the past 6 months. It includes a web traffic source field of organic, search, and display, as well as an amount field detailing the number of users from those sources.
@@ -148,56 +163,41 @@ async function generateQuerySummary(generativeModel, query, description, nextSte
     * Segment search traffic by campaign source to identify high-performing strategies.
     * Analyze display traffic patterns to determine the factors contributing to its decline and explore optimization strategies.
     ---
-    '''
+    \`\`\`
     `;
-    const prompt = {
-        contents: [
-            {
-                role: 'user', parts:[
-                    {
-                        text: queryPrompt
-                    }
-                ]
-            }
-        ]
-    };
-
-    const formattedResp = await generativeModel.generateContent(prompt);
-    return formattedResp.response.candidates[0].content.parts[0].text;
+    return queryPrompt;
 }
 
 
-// for the dashboard summary:
-async function generateSummary(generativeModel, rawQuerySummaries, nextStepsInstructions) {
-    console.log(rawQuerySummaries)
-    const querySummaries = rawQuerySummaries.join('\n');
-
+async function generateSummary(querySummaries, nextStepsInstructions) {
+    const accessToken = await getAccessToken();
     const finalPromptData = `
     You are a specialized answering assistant that can summarize a Looker dashboard and the underlying data and propose operational next steps drawing conclusions from the Query Details listed above. Follow the instructions below:
 
-    Please highlight the findings of all of the query data here. All responses MUST be based on the actual information returned by these queries: \n                            
-    data: ${querySummaries}
+    Please highlight the findings of all of the query data here. All responses MUST be based on the actual information returned by these queries: \n                                     
+    data: ${querySummaries.join('\n')}
 
     For example, use the names of the locations in the data series (like Seattle, Indianapolis, Chicago, etc) in recommendations regarding locations. Use the name of a process if discussing processes. Don't use row numbers to refer to any facility, process or location. This information should be sourced from the above data.
-    Surface the most important or notable details and combine next steps recommendations into one bulleted list of 2-6 suggestions. \n 
+    Surface the most important or notable details and combine next steps recommendations into one bulleted list of 2-6 suggestions. \n
     --------------
     Here is an output format Example:
-        ---------------
-        
-        ## Web Traffic Over Time \n
-        This query details the amount of web traffic received to the website over the past 6 months. It includes a web traffic source field of organic, search and display
-        as well as an amount field detailing the amount of people coming from those sources to the website. \n
-        
-        > It looks like search historically has been driving the most user traffic with 9875 users over the past month with peak traffic happening in december at 1000 unique users.
-        Organic comes in second and display a distant 3rd. It seems that display got off to a decent start in the year, but has decreased in volume consistently into the end of the year.
-        There appears to be a large spike in organic traffic during the month of March a 23% increase from the rest of the year.\n
-        \n
-        
-        ## Next Steps
-        * Look into the data for the month of March to determine if there was an issue in reporting and/or what sort of local events could have caused the spike
-        * Continue investing into search advertisement with common digital marketing strategies. IT would also be good to identify/breakdown this number by campaign source and see what strategies have been working well for Search.
-        * Display seems to be dropping off and variable. Use only during select months and optimize for heavily trafficed areas with a good demographic for the site retention.\n
-        \n
+    ----------------
+    
+    ## Web Traffic Over Time \n
+    This query details the amount of web traffic received to the website over the past 6 months. It includes a web traffic source field of organic, search and display
+    as well as an amount field detailing the amount of people coming from those sources to the website. \n
+    
+    > It looks like search historically has been driving the most user traffic with 9875 users over the past month with peak traffic happening in december at 1000 unique users.
+    Organic comes in second and display a distant 3rd. It seems that display got off to a decent start in the year, but has decreased in volume consistently into the end of the year.
+    There appears to be a large spike in organic traffic during the month of March a 23% increase from the rest of the year.\n
+    \n
+    
+    ## Next Steps
+    * Look into the data for the month of March to determine if there was an issue in reporting and/or what sort of local events could have caused the spike
+    * Continue investing into search advertisement with common digital marketing strategies. IT would also be good to identify/breakdown this number by campaign source and see what strategies have been working well for Search.
+    * Display seems to be dropping off and variable. Use only during select months and optimize for heavily trafficed areas with a good demographic for the site retention.\n
+    \n
+>>>>>>> looker-upstream/main
     -----------
 
     Please add actionable next steps, both for immediate intervention, improved data gathering and further analysis of existing data.
@@ -207,17 +207,34 @@ async function generateSummary(generativeModel, rawQuerySummaries, nextStepsInst
     -----------
     
     `;
-
-    const finalPrompt = {
+    const prompt = {
         contents: [{ role: 'user', parts: [{ text: finalPromptData }] }]
     };
+    const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(prompt),
+    });
 
-    const formattedResp = await generativeModel.generateContent(finalPrompt);
-    return formattedResp.response.candidates[0].content.parts[0].text;
+    if (!response.ok) {
+          const errorText = await response.text();
+        throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+      if (data.error) {
+        throw new Error(`Vertex AI API error: ${data.error.message}`);
+    }
+    return data.candidates[0]?.content?.parts[0]?.text || '';
 }
 
-async function generateQuerySuggestions(generativeModel, queryResults, querySummaries, nextStepsInstructions) {
 
+
+async function generateQuerySuggestions(queryResults, querySummaries, nextStepsInstructions) {
+    const accessToken = await getAccessToken();
     const querySuggestionsPromptData = `
     You are an expert Looker analyst tasked with generating actionable next-step investigation queries in JSON format.
 
@@ -225,40 +242,53 @@ async function generateQuerySuggestions(generativeModel, queryResults, querySumm
 
     * **Actionable and Looker-Executable:** Queries must be feasible within the Looker platform.
     * **Targeted Investigation:** Queries should build upon the provided queryResults and querySummaries, avoiding repetition of existing analyses.
-    * **Alignment with Next Steps:** Queries must directly relate to the analytical "next steps" outlined in `${nextStepsInstructions}` and the context provided within `${querySummaries}`.
+    * **Alignment with Next Steps:** Queries must directly relate to the analytical "next steps" outlined in \`${nextStepsInstructions}\` and the context provided within \`${querySummaries}\`.
     * **Date Filtering:** Include a date filter in every query. If a relevant date range isn't specified in the context, default to the "last 30 days."
 
     Here's the data context:
 
-    * **Current Data:** `${queryResults}`
-    * **Previous Analysis and Next Steps:** `${querySummaries}`
-    * **Next Step Instructions:** `${nextStepsInstructions}`
+    * **Current Data:** \`${queryResults}\`
+    * **Previous Analysis and Next Steps:** \`${querySummaries}\`
+    * **Next Step Instructions:** \`${nextStepsInstructions}\`
 
     Output Format:
 
     Provide your response in the following JSON format, containing exactly three querySuggestion elements:
 
-    '''json
+    \`\`\`json
     [
         {"querySuggestion": "Show me the top XXX entries for YYY on October 13th, 2024"},
         {"querySuggestion": "What are the lowest values for ZZZ, grouped by AAA, in the last 30 days?"},
         {"querySuggestion": "What is the productivity and standard deviation for the XXX facility for the past 3 months?"}
     ]
-    '''
+    \`\`\`
     `;
 
-
-    const querySuggestionsPrompt = {
+    const prompt = {
         contents: [{ role: 'user', parts: [{ text: querySuggestionsPromptData }] }]
     };
+    const response = await fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(prompt),
+    });
 
-    const querySuggestionsResp = await generativeModel.generateContent(querySuggestionsPrompt);
-    return querySuggestionsResp.response.candidates[0].content.parts[0].text;
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+    }
+    const data = await response.json();
+      if (data.error) {
+        throw new Error(`Vertex AI API error: ${data.error.message}`);
+    }
+    return data.candidates[0]?.content?.parts[0]?.text || '';
 }
 
-
-const PORT = process.env.PORT ? process.env.PORT : 5000
+const PORT = process.env.PORT ? process.env.PORT : 5000;
 
 server.listen(PORT, () => {
-    console.log("Listening on: ", PORT)
-})
+    console.log("Listening on: ", PORT);
+});
