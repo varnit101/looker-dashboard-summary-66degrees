@@ -197,7 +197,6 @@ async function generateSummary(querySummaries, nextStepsInstructions) {
     * Continue investing into search advertisement with common digital marketing strategies. IT would also be good to identify/breakdown this number by campaign source and see what strategies have been working well for Search.
     * Display seems to be dropping off and variable. Use only during select months and optimize for heavily trafficed areas with a good demographic for the site retention.\n
     \n
->>>>>>> looker-upstream/main
     -----------
 
     Please add actionable next steps, both for immediate intervention, improved data gathering and further analysis of existing data.
